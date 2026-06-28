@@ -19,6 +19,9 @@ project; every chart's subtitle reflects the **time period of the cached data**.
 
    ```
    DISCORD_TOKEN=your-bot-token
+   # optional: history requests/second for /scrape (Discord4J fetches ~100
+   # messages per request). Default 1.0 (~100 msg/s); <=0 means unlimited.
+   SCRAPE_RATE_PER_SECOND=1.0
    ```
 
 2. In the [Discord Developer Portal](https://discord.com/developers/applications) for your

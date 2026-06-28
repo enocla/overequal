@@ -39,6 +39,7 @@ import java.time.Instant
  */
 class Scraper(
     private val cache: MessageCache,
+    private val ratePerSecond: Double = DEFAULT_RATE_PER_SECOND,
 ) {
     private val log = LoggerFactory.getLogger(Scraper::class.java)
 
@@ -49,6 +50,12 @@ class Scraper(
         onProgress: (suspend (channel: String, total: Int) -> Unit)? = null,
     ): CacheMeta {
         val guildId = guild.id.asString()
+        val limiter = RateLimiter(ratePerSecond)
+        log.info(
+            "scraping guild {} at {}",
+            guild.name,
+            if (limiter.unlimited) "unlimited rate" else "$ratePerSecond req/s (~${(ratePerSecond * PAGE_SIZE).toInt()} msg/s)",
+        )
         val channels =
             guild
                 .channels
@@ -71,7 +78,7 @@ class Scraper(
             val cursor = prior?.cursorFor(ch.id.asString())
 
             val added =
-                runCatching { scrapeChannel(ch, category, guild, cursor, remaining, state, onProgress) }
+                runCatching { scrapeChannel(ch, category, guild, cursor, remaining, state, limiter, onProgress) }
                     .getOrElse {
                         // Missing read permission (or a transient error) on a channel is
                         // expected; skip it. Anything flushed so far is already durable.
@@ -95,6 +102,7 @@ class Scraper(
         cursor: ChannelCursor?,
         remaining: Int,
         state: ScrapeState,
+        limiter: RateLimiter,
         onProgress: (suspend (channel: String, total: Int) -> Unit)?,
     ): Int {
         // With a cursor: only messages newer than the newest one cached (incremental,
@@ -108,6 +116,7 @@ class Scraper(
 
         val batch = ArrayList<RawMessage>(BATCH_SIZE)
         var added = 0
+        var consumed = 0
         var newestId: Long = cursor?.newestId?.toLong() ?: Long.MIN_VALUE
 
         suspend fun flush() {
@@ -121,6 +130,11 @@ class Scraper(
 
         flow.collect { m ->
             if (added >= remaining) return@collect
+            // One permit per page of history (Discord4J fetches PAGE_SIZE per REST
+            // call). Suspending here applies backpressure to the underlying Flux, so
+            // it paces the actual requests, not just our consumption.
+            if (consumed % PAGE_SIZE == 0) limiter.acquire()
+            consumed++
             val author = m.author.orElse(null) ?: return@collect
             batch.add(
                 RawMessage(
@@ -204,5 +218,14 @@ class Scraper(
     companion object {
         /** Messages buffered in memory before a flush to disk + metadata rewrite. */
         private const val BATCH_SIZE = 500
+
+        /** Discord4J fetches message history this many per REST request. */
+        const val PAGE_SIZE = 100
+
+        /**
+         * Default scrape pace: 1 history request/second (~100 messages/s given
+         * [PAGE_SIZE]). Overridable via config; a non-positive value is unlimited.
+         */
+        const val DEFAULT_RATE_PER_SECOND = 1.0
     }
 }

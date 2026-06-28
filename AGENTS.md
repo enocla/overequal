@@ -87,6 +87,12 @@ message snowflake seen) live in `CacheMeta.channels`. Re-running `/scrape`:
   so any boundary overlap is harmless. `CacheMeta.messageCount`/first/last span the
   whole cache and accumulate across runs.
 
+`scrape/RateLimiter.kt` paces history requests: one permit per page (Discord4J
+fetches `Scraper.PAGE_SIZE` = 100 msgs/REST call), evenly spaced. Default
+`Scraper.DEFAULT_RATE_PER_SECOND` = 1.0 req/s (~100 msg/s); override via
+`SCRAPE_RATE_PER_SECOND` (env/.env), `<=0` = unlimited. Suspending the flow
+collector backpressures the `Flux`, so it throttles the actual REST calls.
+
 ## Architecture (planned)
 
 ```

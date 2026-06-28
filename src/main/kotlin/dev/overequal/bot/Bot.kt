@@ -38,7 +38,7 @@ class Bot(
 ) {
     private val log = LoggerFactory.getLogger(Bot::class.java)
     private val cache = MessageCache(config.dataDir)
-    private val scraper = Scraper(cache)
+    private val scraper = Scraper(cache, config.scrapeRatePerSecond)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
     fun run() =
