@@ -1,5 +1,6 @@
 package dev.overequal.viz
 
+import dev.overequal.data.Dataset
 import org.jetbrains.kotlinx.kandy.letsplot.feature.Layout
 import org.jetbrains.kotlinx.kandy.letsplot.style.LegendPosition
 import org.jetbrains.kotlinx.kandy.letsplot.style.Style
@@ -40,5 +41,22 @@ object ChartStyle {
                 position = if (showLegend) LegendPosition.Right else LegendPosition.None
             }
         }
+    }
+
+    /**
+     * Apply the title, the dataset's time-period subtitle (so every chart reflects
+     * the data's period, per the requirement), size and Flexoki style in one call.
+     */
+    fun Layout.standard(
+        title: String,
+        ds: Dataset,
+        width: Int = 1100,
+        height: Int = 850,
+        showLegend: Boolean = false,
+    ) {
+        this.title = title
+        this.subtitle = ds.subtitle()
+        this.size = width to height
+        flexoki(showLegend)
     }
 }
