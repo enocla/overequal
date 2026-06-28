@@ -12,20 +12,13 @@
     "Get the author from message.author.orElse(null) -- skip if null.",
     "Get the channel from message.channel.awaitSingle() cast to GuildMessageChannel (skip if not a GuildMessageChannel).",
     "Get the category name from (channel as? CategorizableChannel)?.category?.awaitFirstOrNull()?.name.",
-    "Construct a RawMessage using the same field mapping as Scraper.scrapeChannel: id = message.id.asString(), type = message.type.name, timestamp = message.timestamp.toString(), content = message.content, author = author.toRaw() [private in Scraper, so replicate: RawUser(id.asString(), username, globalName.orElse(null), isBot)], mentions = message.userMentions.map { it.toRaw() }, channel = RawChannel(channel.id.asString(), null, category, channel.name), guild = RawGuild(guildId, event.guild.awaitSingle().name).",
-    "NOTE: message.userMentions returns a Flux<User>; collect it with .collectList().awaitSingle() to get a List<User>, then map.",
+    "Construct a RawMessage using the same field mapping as Scraper.scrapeChannel.",
     "Append the message: cache.appendBatch(guildId, listOf(rawMessage)).",
-    "Update the cursor: read current meta via cache.meta(guildId). Build an updated CacheMeta: update the ChannelCursor for this channel by finding the existing one, updating newestId to max(existing.newestId?.toLong() ?: Long.MIN_VALUE, message.id.asLong()).toString() and incrementing count by 1. If no existing cursor for this channel, create a new ChannelCursor. Keep all other cursors unchanged. Increment messageCount by 1. Update lastTimestamp if message.timestamp is after the current lastTimestamp (use Time.isoString and Time.parse). Keep firstTimestamp unchanged if already set. Write back with cache.writeMeta(updatedMeta).",
-    "Add a logger (LoggerFactory.getLogger(MessageWatcher::class.java)) and log debug for each watched message (guildId, channelId, messageId).",
-    "Wrap the entire per-message logic in a runCatching { ... }.onFailure { log.warn(...) } so a single bad message never crashes the watcher.",
+    "Update the cursor via cache.withMetaLock(guildId) to guard the meta read-modify-write.",
+    "Add a logger and log debug for each watched message.",
+    "Wrap the entire per-message logic in runCatching so a single bad message never crashes the watcher.",
     "In Bot.kt, instantiate MessageWatcher(cache) as a private val in the Bot class.",
-    "In Bot.run(), after the two existing scope.launch { gateway.on(...) } blocks, add a third scope.launch { messageWatcher.watch(gateway, scope) } call.",
-    "Add necessary imports to Bot.kt for MessageWatcher.",
-    "Run ./gradlew spotlessApply to format all modified files.",
-    "Run ./gradlew build to confirm the project compiles cleanly.",
-    "Create a new git branch named feat/message-watcher from the current HEAD.",
-    "Stage and commit all changes with a descriptive commit message (no Co-Authored-By trailer).",
-    "Push the branch and open a PR targeting main via the GitHub power tools (owner: Tnixc, repo: overequal)."
+    "In Bot.run(), call messageWatcher.watch(gateway, scope) after the gateway is connected."
   ],
   "acceptance_criteria": [
     "MessageWatcher.kt exists at src/main/kotlin/dev/overequal/scrape/MessageWatcher.kt",
@@ -40,5 +33,5 @@
     "NOTE: ./gradlew build is NOT available in this sandbox (INTEGRATIONS_ONLY - Maven registries blocked). Verification is: carefully inspect the generated Kotlin code for correctness against the existing patterns in Scraper.kt and Bot.kt. Confirm all imports are correct, all types align with Models.kt and MessageCache.kt APIs. Treat the code review by the semantic reviewer as the final gate."
   ],
   "blocked_reason": null,
-  "findings": "Implemented MessageWatcher.kt with a clean two-part structure: guard checks (DM filter, hasCache) in the collect lambda where return@collect is valid, and all actual message processing in a private handle() function wrapped in runCatching. This avoids the Kotlin limitation of using return@collect inside a non-inline runCatching lambda. Cursor update logic mirrors Scraper.ScrapeState.record() exactly. Bot.kt updated with import, field, and launch call. Build verification was structural (network-blocked sandbox prevented ./gradlew build). Review fixes applied (commit e0e2e0f): (1) Added ConcurrentHashMap<String, Mutex> per-guild meta lock to guard read-modify-write against concurrent /scrape; (2) firstTimestamp now updated symmetrically with lastTimestamp using isBefore check; (3) Removed suspend from watch() and removed outer scope.launch wrapper in Bot.kt so structured concurrency owns the coroutine lifetime; (4) Added warn log when meta() returns null despite cache existing (interrupted scrape scenario)."
+  "findings": "All 3 review issues addressed in commit 38a448f: (1) Fixed non-atomic mutex factory - replaced getOrPut with computeIfAbsent in per-guild Mutex lookup; (2) Fixed userMentions type mismatch - replaced reactor collectList().awaitSingle() with plain .map {} matching Scraper.kt pattern, message.userMentions is List<User> not Flux<User>; (3) Fixed watcher-vs-scraper meta race - moved per-guild Mutex into MessageCache as withMetaLock(guildId, block) using ConcurrentHashMap.computeIfAbsent, updated both flush() and final writeMeta in Scraper to call cache.withMetaLock, removed redundant metaLocks and metaMutex() from MessageWatcher. Changed bare return inside withMetaLock lambda to return@withMetaLock. Build verification remains structural only (INTEGRATIONS_ONLY sandbox)."
 }
