@@ -58,6 +58,56 @@ java {
     targetCompatibility = JavaVersion.VERSION_21
 }
 
+// ---------------------------------------------------------------------------
+// Embed the short git hash into a generated resource file at compile time.
+// The file lands at build/generated/resources/version.properties and is
+// added to the main resource source set so it appears on the classpath as
+// /version.properties.  Bot.kt reads it via getResourceAsStream instead of
+// shelling out to git at runtime.
+//
+// The hash is resolved at configuration time and registered as a task input so
+// Gradle's up-to-date check keys off the hash value: a new commit changes the
+// input and the task re-runs, rewriting the resource. Declaring only an output
+// dir (with no inputs) would mark the task UP-TO-DATE after the first build and
+// leave the embedded hash stale across commits.
+// ---------------------------------------------------------------------------
+val gitHash: String =
+    runCatching {
+        val result =
+            ProcessBuilder("git", "rev-parse", "--short", "HEAD")
+                .redirectErrorStream(true)
+                .start()
+        result.waitFor()
+        result.inputStream
+            .bufferedReader()
+            .readText()
+            .trim()
+            .ifBlank { "unknown" }
+    }.getOrDefault("unknown")
+
+val generateVersionProperties by tasks.registering {
+    description = "Writes build/generated/resources/version.properties with the short git hash."
+    group = "build"
+
+    val outputDir = layout.buildDirectory.dir("generated/resources")
+    inputs.property("gitHash", gitHash)
+    outputs.dir(outputDir)
+
+    doLast {
+        val propsFile = outputDir.get().asFile.resolve("version.properties")
+        propsFile.parentFile.mkdirs()
+        propsFile.writeText("git.hash=$gitHash\n")
+    }
+}
+
+sourceSets["main"].resources.srcDir(
+    generateVersionProperties.map { it.outputs.files.singleFile },
+)
+
+tasks.named("processResources") {
+    dependsOn(generateVersionProperties)
+}
+
 tasks.test {
     useJUnitPlatform()
 }

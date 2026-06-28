@@ -31,7 +31,8 @@ import org.slf4j.LoggerFactory
 
 /**
  * The Discord bot. Registers per-guild slash commands (instant, and works in any
- * server it joins) and serves them: `/scrape`, `/viz`, `/viz-all`, `/status`.
+ * server it joins) and serves them: `/scrape`, `/viz`, `/viz-all`, `/status`,
+ * `/bot-info`.
  * Output is Components V2 (see [ComponentsV2]).
  */
 class Bot(
@@ -42,6 +43,19 @@ class Bot(
     private val scraper = Scraper(cache, config.scrapeRatePerSecond)
     private val messageWatcher = MessageWatcher(cache)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+
+    /**
+     * Short git commit hash embedded at compile time into the classpath resource
+     * `/version.properties` by the `generateVersionProperties` Gradle task.
+     * Falls back to "unknown" if the resource is absent (e.g. running from an IDE
+     * without having run the build task).
+     */
+    private val gitHash: String =
+        runCatching {
+            val props = java.util.Properties()
+            Bot::class.java.getResourceAsStream("/version.properties")?.use { props.load(it) }
+            (props.getProperty("git.hash") ?: "unknown").ifBlank { "unknown" }
+        }.getOrDefault("unknown")
 
     fun run() =
         runBlocking {
@@ -134,6 +148,11 @@ class Bot(
                     .name("status")
                     .description("Show what is cached for this server")
                     .build(),
+                ApplicationCommandRequest
+                    .builder()
+                    .name("bot-info")
+                    .description("Show the running bot version (git commit hash)")
+                    .build(),
             )
 
         gateway.restClient
@@ -195,6 +214,7 @@ class Bot(
                 "viz" -> handleViz(event, guildId)
                 "viz-all" -> handleVizAll(event, guildId)
                 "status" -> handleStatus(event, guildId)
+                "bot-info" -> handleBotInfo(event)
             }
         } catch (e: Exception) {
             log.error("command {} failed: {}", event.commandName, e.message, e)
@@ -302,6 +322,16 @@ class Bot(
                 }
             }
         send(event, ComponentsV2.notice(text))
+    }
+
+    private suspend fun handleBotInfo(event: ChatInputInteractionEvent) {
+        event.deferReply().awaitFirstOrNull()
+        send(
+            event,
+            ComponentsV2.notice(
+                "## 🤖 Bot info\n**Version (git commit):** `$gitHash`",
+            ),
+        )
     }
 
     // --- helpers ------------------------------------------------------------
