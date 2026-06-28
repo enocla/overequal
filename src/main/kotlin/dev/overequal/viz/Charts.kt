@@ -6,7 +6,9 @@ import org.jetbrains.kotlinx.kandy.dsl.categorical
 import org.jetbrains.kotlinx.kandy.dsl.continuous
 import org.jetbrains.kotlinx.kandy.dsl.plot
 import org.jetbrains.kotlinx.kandy.ir.Plot
+import org.jetbrains.kotlinx.kandy.letsplot.feature.Position
 import org.jetbrains.kotlinx.kandy.letsplot.feature.layout
+import org.jetbrains.kotlinx.kandy.letsplot.feature.position
 import org.jetbrains.kotlinx.kandy.letsplot.layers.area
 import org.jetbrains.kotlinx.kandy.letsplot.layers.bars
 import org.jetbrains.kotlinx.kandy.letsplot.layers.barsH
@@ -197,6 +199,58 @@ object Charts {
                 }
             }
             layout { standard(title, ds, width, height) }
+        }
+    }
+
+    /**
+     * Stacked layers (bars or area) from long-form data. [x]/[y]/[group] are
+     * parallel per-point lists; [groupOrder] sets the stack/legend order (put the
+     * most-active group last so it sits on top); [colors] maps group -> colour.
+     * [yearAxis] labels a fractional-year x with whole years.
+     */
+    fun stacked(
+        ds: Dataset,
+        title: String,
+        xLabel: String,
+        yLabel: String,
+        x: List<Double>,
+        y: List<Double>,
+        group: List<String>,
+        groupOrder: List<String>,
+        colors: Map<String, Color>,
+        asArea: Boolean,
+        yearAxis: Boolean = true,
+        showLegend: Boolean = true,
+        width: Int = 1300,
+        height: Int = 820,
+    ): Plot {
+        val data = mapOf("x" to x, "y" to y, "g" to group)
+        val scalePairs = groupOrder.map { it to colors.getValue(it) }.toTypedArray()
+        val years = if (x.isEmpty()) IntRange.EMPTY else ceil(x.min()).toInt()..floor(x.max()).toInt()
+        return plot(data) {
+            if (asArea) {
+                area {
+                    x("x") {
+                        axis.name = xLabel
+                        if (yearAxis && !years.isEmpty()) axis.breaksLabeled(years.map { it.toDouble() }, years.map { it.toString() })
+                    }
+                    y("y") { axis.name = yLabel }
+                    fillColor("g") { scale = categorical(*scalePairs) }
+                    alpha = 0.9
+                    position = Position.stack()
+                }
+            } else {
+                bars {
+                    x("x") {
+                        axis.name = xLabel
+                        if (yearAxis && !years.isEmpty()) axis.breaksLabeled(years.map { it.toDouble() }, years.map { it.toString() })
+                    }
+                    y("y") { axis.name = yLabel }
+                    fillColor("g") { scale = categorical(*scalePairs) }
+                    position = Position.stack()
+                }
+            }
+            layout { standard(title, ds, width, height, showLegend) }
         }
     }
 
