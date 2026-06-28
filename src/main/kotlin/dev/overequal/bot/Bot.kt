@@ -42,17 +42,17 @@ class Bot(
     private val scraper = Scraper(cache, config.scrapeRatePerSecond)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
-    /** Short git commit hash resolved once at startup, or "unknown" if the repo is unavailable. */
+    /**
+     * Short git commit hash embedded at compile time into the classpath resource
+     * `/version.properties` by the `generateVersionProperties` Gradle task.
+     * Falls back to "unknown" if the resource is absent (e.g. running from an IDE
+     * without having run the build task).
+     */
     private val gitHash: String =
         runCatching {
-            ProcessBuilder("git", "rev-parse", "--short", "HEAD")
-                .redirectErrorStream(true)
-                .start()
-                .inputStream
-                .bufferedReader()
-                .readText()
-                .trim()
-                .ifBlank { "unknown" }
+            val props = java.util.Properties()
+            Bot::class.java.getResourceAsStream("/version.properties")?.use { props.load(it) }
+            (props.getProperty("git.hash") ?: "unknown").ifBlank { "unknown" }
         }.getOrDefault("unknown")
 
     fun run() =
