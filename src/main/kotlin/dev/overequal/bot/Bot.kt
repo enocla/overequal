@@ -72,7 +72,7 @@ class Bot(
                     scope.launch { handle(ev) }
                 }
             }
-            scope.launch { messageWatcher.watch(gateway, scope) }
+            messageWatcher.watch(gateway, scope)
 
             gateway.onDisconnect().awaitFirstOrNull()
         }
