@@ -64,11 +64,13 @@ One JSON object per message. Key fields we use: `id`, `timestamp` (ISO-8601), `c
 ## Visualization theme (see `datavis/config.py`)
 
 Flexoki palette (BLACK `#100F0F`, PAPER `#FFFCF0`, plus 50–950 ramps of red/orange/yellow/
-green/cyan/blue/purple/magenta/gray). Body serif font "IowanOldSt BT"; usernames in a
-dedicated token font (`Redacted-Regular.ttf` — a redaction font). Rules: per-bar frequency
-gradient (same hue, darker = larger); grid lines `BLACK @ alpha .25, lw .3` (.5 single-axis);
-most-active member at the TOP of bar charts. Fonts may be absent on other machines → fall
-back to logical Serif/Mono gracefully.
+green/cyan/blue/purple/magenta/gray). Body/label font **IBM Plex Sans** (bundled in
+`resources/fonts/`, registered with AWT at startup by `viz/Fonts.kt` so Lets-Plot resolves
+the family on any machine; falls back to a logical sans if registration fails). Rules:
+per-bar frequency gradient (same hue, darker = larger); grid lines `BLACK @ alpha .25, lw .3`
+(.5 single-axis); axis lines/ticks are ink (Lets-Plot's default is blue — overridden in
+`ChartStyle`); most-active member at the TOP of bar charts. Charts get a fixed padding
+inset around the plotting area (`ChartStyle.PAD`).
 
 ## Architecture (planned)
 
@@ -128,6 +130,6 @@ slurs_per_message). LLM charts (topics/sentiment/typos) and the word-cloud are o
 Bot (`Bot.kt`): `/scrape /viz /viz-all /status`, Components V2 output, per-guild command
 registration. Live-verified login + command registration with the real token. Scraping
 message text needs MESSAGE_CONTENT enabled in the Developer Portal (else gateway 4014);
-`MESSAGE_CONTENT_INTENT=false` lets the bot run without it. Headless CLI: `render`.
+the bot always requests that intent. Headless CLI: `render`.
 
 See `git log` for the running checkpoint history and `README.md` for setup/run.

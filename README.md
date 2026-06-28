@@ -19,15 +19,12 @@ project; every chart's subtitle reflects the **time period of the cached data**.
 
    ```
    DISCORD_TOKEN=your-bot-token
-   # optional: set false to log in without the privileged MESSAGE_CONTENT intent
-   # (the bot runs, but /scrape can't read message text until it's enabled)
-   MESSAGE_CONTENT_INTENT=true
    ```
 
 2. In the [Discord Developer Portal](https://discord.com/developers/applications) for your
    app: **Bot → Privileged Gateway Intents → enable "Message Content Intent"**. Without it
-   the gateway rejects the connection with `4014` when the intent is requested, and even if
-   disabled in `.env` the scraper will only capture empty message text.
+   the gateway rejects the connection with `4014`, since the bot requests that intent so the
+   scraper can read message text.
 
 3. Invite the bot with the `bot` and `applications.commands` scopes and at least
    *View Channels* + *Read Message History* permissions.

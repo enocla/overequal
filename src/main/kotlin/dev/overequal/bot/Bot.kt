@@ -47,17 +47,13 @@ class Bot(
                 DiscordClient
                     .create(config.token)
                     .gateway()
-                    // Non-privileged intents, plus MESSAGE_CONTENT (privileged) when
-                    // enabled, so the scraper can read historical message text.
-                    // MESSAGE_CONTENT must also be enabled in the Developer Portal, else
-                    // the gateway closes with 4014; the other privileged intents
-                    // (presences/members) are never requested.
+                    // Non-privileged intents plus MESSAGE_CONTENT (privileged), so the
+                    // scraper can read historical message text. MESSAGE_CONTENT must be
+                    // enabled in the Developer Portal too, else the gateway closes with
+                    // 4014; the other privileged intents (presences/members) are never
+                    // requested.
                     .setEnabledIntents(
-                        if (config.messageContentIntent) {
-                            IntentSet.nonPrivileged().or(IntentSet.of(Intent.MESSAGE_CONTENT))
-                        } else {
-                            IntentSet.nonPrivileged()
-                        },
+                        IntentSet.nonPrivileged().or(IntentSet.of(Intent.MESSAGE_CONTENT)),
                     ).login()
                     .awaitSingle()
             val appId = gateway.restClient.applicationId.awaitSingle()

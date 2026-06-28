@@ -2,6 +2,7 @@ package dev.overequal
 
 import dev.overequal.bot.Bot
 import dev.overequal.cli.RenderCli
+import dev.overequal.viz.Fonts
 
 /**
  * Entry point. Subcommands:
@@ -10,6 +11,7 @@ import dev.overequal.cli.RenderCli
  */
 fun main(args: Array<String>) {
     System.setProperty("java.awt.headless", "true")
+    Fonts.register()
 
     when (args.firstOrNull()) {
         "render" -> RenderCli.run(args.drop(1))
