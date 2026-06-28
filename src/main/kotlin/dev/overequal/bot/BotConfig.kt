@@ -12,15 +12,25 @@ import kotlin.io.path.readLines
 data class BotConfig(
     val token: String,
     val dataDir: Path = Path("data"),
+    /**
+     * Request the privileged MESSAGE_CONTENT intent (needed to scrape message
+     * text). Must be enabled in the Discord Developer Portal too, else the
+     * gateway closes with 4014. Disable via `MESSAGE_CONTENT_INTENT=false` to run
+     * the bot without scraping text (e.g. before enabling it in the portal).
+     */
+    val messageContentIntent: Boolean = true,
 ) {
     companion object {
         fun load(envFile: Path = Path(".env")): BotConfig {
-            val fromEnv = System.getenv("DISCORD_TOKEN")
+            val dotenv = readDotenv(envFile)
             val token =
-                fromEnv?.takeIf { it.isNotBlank() }
-                    ?: readDotenv(envFile)["DISCORD_TOKEN"]
+                System.getenv("DISCORD_TOKEN")?.takeIf { it.isNotBlank() }
+                    ?: dotenv["DISCORD_TOKEN"]
                     ?: error("DISCORD_TOKEN not set (env var or .env file)")
-            return BotConfig(token = token.trim())
+            val mci =
+                (System.getenv("MESSAGE_CONTENT_INTENT") ?: dotenv["MESSAGE_CONTENT_INTENT"])
+                    ?.lowercase() != "false"
+            return BotConfig(token = token.trim(), messageContentIntent = mci)
         }
 
         private fun readDotenv(file: Path): Map<String, String> {

@@ -15,6 +15,7 @@ import discord4j.core.`object`.command.ApplicationCommandOption
 import discord4j.discordjson.json.ApplicationCommandOptionChoiceData
 import discord4j.discordjson.json.ApplicationCommandOptionData
 import discord4j.discordjson.json.ApplicationCommandRequest
+import discord4j.gateway.intent.Intent
 import discord4j.gateway.intent.IntentSet
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -46,8 +47,18 @@ class Bot(
                 DiscordClient
                     .create(config.token)
                     .gateway()
-                    .setEnabledIntents(IntentSet.all())
-                    .login()
+                    // Non-privileged intents, plus MESSAGE_CONTENT (privileged) when
+                    // enabled, so the scraper can read historical message text.
+                    // MESSAGE_CONTENT must also be enabled in the Developer Portal, else
+                    // the gateway closes with 4014; the other privileged intents
+                    // (presences/members) are never requested.
+                    .setEnabledIntents(
+                        if (config.messageContentIntent) {
+                            IntentSet.nonPrivileged().or(IntentSet.of(Intent.MESSAGE_CONTENT))
+                        } else {
+                            IntentSet.nonPrivileged()
+                        },
+                    ).login()
                     .awaitSingle()
             val appId = gateway.restClient.applicationId.awaitSingle()
             log.info("logged in; application id {}", appId)
