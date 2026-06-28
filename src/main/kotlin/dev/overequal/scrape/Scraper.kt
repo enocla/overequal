@@ -50,48 +50,56 @@ class Scraper(
         onProgress: (suspend (channel: String, total: Int) -> Unit)? = null,
     ): CacheMeta {
         val guildId = guild.id.asString()
-        val limiter = RateLimiter(ratePerSecond)
-        log.info(
-            "scraping guild {} at {}",
-            guild.name,
-            if (limiter.unlimited) "unlimited rate" else "$ratePerSecond req/s (~${(ratePerSecond * PAGE_SIZE).toInt()} msg/s)",
-        )
-        val channels =
-            guild
-                .channels
-                .collectList()
-                .awaitSingle()
-                .filterIsInstance<GuildMessageChannel>()
-                .filter { channelName == null || it.name.equals(channelName, ignoreCase = true) }
+        // Own the guild's meta for the whole run: the live watcher defers its flush while a
+        // scrape is in flight (MessageCache.isScraping) so it can't clobber the meta this
+        // rebuilds from its in-memory accumulator.
+        cache.beginScrape(guildId)
+        try {
+            val limiter = RateLimiter(ratePerSecond)
+            log.info(
+                "scraping guild {} at {}",
+                guild.name,
+                if (limiter.unlimited) "unlimited rate" else "$ratePerSecond req/s (~${(ratePerSecond * PAGE_SIZE).toInt()} msg/s)",
+            )
+            val channels =
+                guild
+                    .channels
+                    .collectList()
+                    .awaitSingle()
+                    .filterIsInstance<GuildMessageChannel>()
+                    .filter { channelName == null || it.name.equals(channelName, ignoreCase = true) }
 
-        // Resume from existing metadata when present; otherwise start fresh (and
-        // clear any stale corpus so a full backfill doesn't double up on disk).
-        val prior = cache.meta(guildId)
-        if (prior == null) cache.truncate(guildId)
+            // Resume from existing metadata when present; otherwise start fresh (and
+            // clear any stale corpus so a full backfill doesn't double up on disk).
+            val prior = cache.meta(guildId)
+            if (prior == null) cache.truncate(guildId)
 
-        val state = ScrapeState(guildId, guild.name, prior)
-        var remaining = limit ?: Int.MAX_VALUE
+            val state = ScrapeState(guildId, guild.name, prior)
+            var remaining = limit ?: Int.MAX_VALUE
 
-        for (ch in channels) {
-            if (remaining <= 0) break
-            val category = (ch as? CategorizableChannel)?.category?.awaitFirstOrNull()?.name
-            val cursor = prior?.cursorFor(ch.id.asString())
+            for (ch in channels) {
+                if (remaining <= 0) break
+                val category = (ch as? CategorizableChannel)?.category?.awaitFirstOrNull()?.name
+                val cursor = prior?.cursorFor(ch.id.asString())
 
-            val added =
-                runCatching { scrapeChannel(ch, category, guild, cursor, remaining, state, limiter, onProgress) }
-                    .getOrElse {
-                        // Missing read permission (or a transient error) on a channel is
-                        // expected; skip it. Anything flushed so far is already durable.
-                        log.warn("skipping #{}: {}", ch.name, it.message)
-                        0
-                    }
-            remaining -= added
+                val added =
+                    runCatching { scrapeChannel(ch, category, guild, cursor, remaining, state, limiter, onProgress) }
+                        .getOrElse {
+                            // Missing read permission (or a transient error) on a channel is
+                            // expected; skip it. Anything flushed so far is already durable.
+                            log.warn("skipping #{}: {}", ch.name, it.message)
+                            0
+                        }
+                remaining -= added
+            }
+
+            val meta = state.toMeta()
+            cache.withMetaLock(guildId) { cache.writeMeta(meta) }
+            log.info("cache now holds {} messages for guild {} ({})", meta.messageCount, guild.name, guildId)
+            return meta
+        } finally {
+            cache.endScrape(guildId)
         }
-
-        val meta = state.toMeta()
-        cache.withMetaLock(guildId) { cache.writeMeta(meta) }
-        log.info("cache now holds {} messages for guild {} ({})", meta.messageCount, guild.name, guildId)
-        return meta
     }
 
     /** Stream one channel, flushing batches; returns how many new messages were added. */

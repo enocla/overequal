@@ -93,6 +93,29 @@ fetches `Scraper.PAGE_SIZE` = 100 msgs/REST call), evenly spaced. Default
 `SCRAPE_RATE_PER_SECOND` (env/.env), `<=0` = unlimited. Suspending the flow
 collector backpressures the `Flux`, so it throttles the actual REST calls.
 
+`scrape/MessageWatcher.kt` keeps the cache fresh **between** scrapes — a
+freshness supplement, not a discovery mechanism. It buffers live
+`MessageCreateEvent`s in memory and flushes (one `appendBatch` + one
+`writeMeta`) every `FLUSH_INTERVAL_MS` (3s) or once a guild's buffer hits
+`FLUSH_SIZE` (200), instead of rewriting `meta.json` per message. Rules that
+keep it consistent with the scraper:
+- **Known channels only.** It advances a channel's cursor only if one already
+  exists (the scraper visited it). A message in an unscraped channel — created
+  after the last scrape, empty-at-scrape, or a thread — is dropped; the next
+  `/scrape` backfills that channel in full. (This is the fix for the old bug
+  where a watcher-minted cursor made the next scrape skip all prior history.)
+- **Snowflake floor.** Within a known channel only messages strictly newer than
+  the cursor are kept, so a scrape-boundary overlap isn't double-counted.
+- **Scrape coordination.** `Scraper.scrape` brackets a run with
+  `cache.beginScrape/endScrape`; while `cache.isScraping(guildId)` the watcher
+  defers its flush (the scraper owns the meta), draining once the scrape ends.
+- **Durable by recovery.** A cursor advances only on flush, so anything buffered
+  but not yet flushed (e.g. on a crash) is re-fetched by the next `/scrape`.
+The pure merge is `mergeLiveBatch(existing, drained)` (unit-tested in
+`LiveMergeTest`). `/status` lists channels with data (those that stay live).
+The watcher is wired up in `Bot.run()` and needs the (already-requested)
+`MESSAGE_CONTENT` intent to capture text.
+
 ## Architecture (planned)
 
 ```

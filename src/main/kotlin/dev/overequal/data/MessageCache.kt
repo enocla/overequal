@@ -38,6 +38,24 @@ class MessageCache(
         block: suspend () -> T,
     ): T = metaLocks.computeIfAbsent(guildId) { Mutex() }.withLock { block() }
 
+    /**
+     * Guilds with a scrape currently in flight. The [Scraper][dev.overequal.scrape.Scraper]
+     * rebuilds meta from an in-memory accumulator seeded at scrape start, so a concurrent
+     * meta write from the live watcher would be clobbered (lost-update). The watcher checks
+     * [isScraping] and defers its flush for these guilds until the scrape finishes.
+     */
+    private val scraping = ConcurrentHashMap.newKeySet<String>()
+
+    fun beginScrape(guildId: String) {
+        scraping.add(guildId)
+    }
+
+    fun endScrape(guildId: String) {
+        scraping.remove(guildId)
+    }
+
+    fun isScraping(guildId: String): Boolean = guildId in scraping
+
     private val json =
         Json {
             ignoreUnknownKeys = true

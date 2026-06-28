@@ -8,6 +8,9 @@ build/
 *.iml
 .vscode/
 
+# Agent task scaffolding (local working files, not part of the project)
+.agents/
+
 # OS
 .DS_Store
 

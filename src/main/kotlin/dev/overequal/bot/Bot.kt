@@ -318,7 +318,16 @@ class Bot(
                     append("## 📦 Cache status\n")
                     append("**${"%,d".format(meta.messageCount)}** messages from **${meta.channels.size}** channels.\n")
                     if (meta.firstTimestamp != null) append("Period: `${meta.firstTimestamp}` → `${meta.lastTimestamp}`\n")
-                    append("Available charts: ${Visualizations.ids().joinToString(", ") { "`$it`" }}")
+                    if (meta.channels.isNotEmpty()) {
+                        append("\n**Channels with data** (these stay live; others need a `/scrape`):\n")
+                        val ranked = meta.channels.sortedByDescending { it.count }
+                        ranked.take(STATUS_CHANNEL_LIMIT).forEach {
+                            append("• #${it.name} — ${"%,d".format(it.count)}\n")
+                        }
+                        val rest = ranked.size - STATUS_CHANNEL_LIMIT
+                        if (rest > 0) append("• …and **$rest** more\n")
+                    }
+                    append("\nAvailable charts: ${Visualizations.ids().joinToString(", ") { "`$it`" }}")
                 }
             }
         send(event, ComponentsV2.notice(text))
@@ -367,6 +376,9 @@ class Bot(
     }
 
     companion object {
+        /** Max channels listed in `/status` before collapsing the rest into a "+N more" line. */
+        private const val STATUS_CHANNEL_LIMIT = 25
+
         fun start() {
             val config = BotConfig.load()
             Bot(config).run()
