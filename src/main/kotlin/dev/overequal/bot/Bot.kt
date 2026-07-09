@@ -11,6 +11,7 @@ import dev.overequal.viz.Visualizations
 import discord4j.core.DiscordClient
 import discord4j.core.GatewayDiscordClient
 import discord4j.core.event.domain.guild.GuildCreateEvent
+import discord4j.core.event.domain.interaction.ButtonInteractionEvent
 import discord4j.core.event.domain.interaction.ChatInputInteractionEvent
 import discord4j.core.`object`.command.ApplicationCommandOption
 import discord4j.core.`object`.entity.Guild
@@ -29,6 +30,8 @@ import kotlinx.coroutines.reactor.awaitSingle
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import org.slf4j.LoggerFactory
+import java.util.UUID
+import java.util.concurrent.ConcurrentHashMap
 
 /**
  * The Discord bot. Registers per-guild slash commands (instant, and works in any
@@ -44,6 +47,7 @@ class Bot(
     private val scraper = Scraper(cache, config.scrapeRatePerSecond)
     private val messageWatcher = MessageWatcher(cache)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    private val vizAllSessions = ConcurrentHashMap<String, VizAllSession>()
 
     /**
      * Short git commit hash embedded at compile time into the classpath resource
@@ -104,6 +108,11 @@ class Bot(
             scope.launch {
                 gateway.on(ChatInputInteractionEvent::class.java).asFlow().collect { ev ->
                     scope.launch { handle(ev) }
+                }
+            }
+            scope.launch {
+                gateway.on(ButtonInteractionEvent::class.java).asFlow().collect { ev ->
+                    scope.launch { handleButton(ev) }
                 }
             }
             messageWatcher.watch(gateway, scope)
@@ -248,6 +257,19 @@ class Bot(
         }
     }
 
+    private suspend fun handleButton(event: ButtonInteractionEvent) {
+        if (!event.customId.startsWith(VIZ_ALL_BUTTON_PREFIX)) return
+
+        try {
+            handleVizAllPageButton(event)
+        } catch (e: Exception) {
+            log.error("button interaction {} failed: {}", event.customId, e.message, e)
+            runCatching {
+                event.reply("⚠️ Something went wrong: ${e.message}").withEphemeral(true).awaitFirstOrNull()
+            }
+        }
+    }
+
     private suspend fun handleScrape(
         event: ChatInputInteractionEvent,
         guildId: String,
@@ -323,11 +345,40 @@ class Bot(
             send(event, ComponentsV2.notice("ℹ️ Not enough data to render anything."))
             return
         }
-        send(event, ComponentsV2.notice("## 📊 ${ds.guildName} — ${rendered.size} visualizations\n${ds.periodLabel()}"))
-        // Up to 4 charts (containers + files) per message to stay within limits.
-        for (batch in rendered.chunked(4)) {
-            send(event, ComponentsV2.charts(batch))
+
+        val sessionId = newVizAllSessionId()
+        pruneVizAllSessions()
+        vizAllSessions[sessionId] =
+            VizAllSession(
+                guildName = ds.guildName,
+                periodLabel = ds.periodLabel(),
+                rendered = rendered,
+                expiresAtMillis = System.currentTimeMillis() + VIZ_ALL_SESSION_TTL_MS,
+            )
+        send(event, vizAllPageMessage(sessionId, pageIndex = 0))
+    }
+
+    private suspend fun handleVizAllPageButton(event: ButtonInteractionEvent) {
+        val (sessionId, pageIndex) =
+            parseVizAllButton(event.customId)
+                ?: run {
+                    event.reply("That pagination control is invalid.").withEphemeral(true).awaitFirstOrNull()
+                    return
+                }
+
+        pruneVizAllSessions()
+        val session = vizAllSessions[sessionId]
+        if (session == null) {
+            event.reply("This `/viz-all` page expired. Run `/viz-all` again.").withEphemeral(true).awaitFirstOrNull()
+            return
         }
+
+        val message = vizAllPageMessage(sessionId, pageIndex)
+        event
+            .edit()
+            .withComponents(*message.components.toTypedArray())
+            .withFiles(*message.files.toTypedArray())
+            .awaitFirstOrNull()
     }
 
     private suspend fun handleStatus(
@@ -509,9 +560,73 @@ class Bot(
             .awaitSingle()
     }
 
+    private fun vizAllPageMessage(
+        sessionId: String,
+        pageIndex: Int,
+    ): V2Message {
+        val session = vizAllSessions.getValue(sessionId)
+        val pageCount = pageCount(session.rendered.size)
+        val page = pageIndex.coerceIn(0, pageCount - 1)
+        val start = page * VIZ_ALL_PAGE_SIZE
+        val items = session.rendered.subList(start, minOf(start + VIZ_ALL_PAGE_SIZE, session.rendered.size))
+
+        return ComponentsV2.chartsPage(
+            guildName = session.guildName,
+            periodLabel = session.periodLabel,
+            totalCharts = session.rendered.size,
+            pageIndex = page,
+            pageCount = pageCount,
+            items = items,
+            firstCustomId = vizAllCustomId(sessionId, 0),
+            previousCustomId = vizAllCustomId(sessionId, (page - 1).coerceAtLeast(0)),
+            currentCustomId = vizAllCustomId(sessionId, page),
+            nextCustomId = vizAllCustomId(sessionId, (page + 1).coerceAtMost(pageCount - 1)),
+            lastCustomId = vizAllCustomId(sessionId, pageCount - 1),
+        )
+    }
+
+    private fun newVizAllSessionId(): String =
+        UUID
+            .randomUUID()
+            .toString()
+            .replace("-", "")
+            .take(16)
+
+    private fun vizAllCustomId(
+        sessionId: String,
+        pageIndex: Int,
+    ): String = "$VIZ_ALL_BUTTON_PREFIX:$sessionId:$pageIndex"
+
+    private fun parseVizAllButton(customId: String): Pair<String, Int>? {
+        val parts = customId.split(":")
+        if (parts.size != 4 || parts[0] != "overequal" || parts[1] != "viz-all") return null
+        val pageIndex = parts[3].toIntOrNull() ?: return null
+        return parts[2] to pageIndex
+    }
+
+    private fun pageCount(itemCount: Int): Int = (itemCount + VIZ_ALL_PAGE_SIZE - 1) / VIZ_ALL_PAGE_SIZE
+
+    private fun pruneVizAllSessions(nowMillis: Long = System.currentTimeMillis()) {
+        for ((sessionId, session) in vizAllSessions) {
+            if (session.expiresAtMillis <= nowMillis) {
+                vizAllSessions.remove(sessionId, session)
+            }
+        }
+    }
+
+    private data class VizAllSession(
+        val guildName: String,
+        val periodLabel: String,
+        val rendered: List<Pair<Visualization, ByteArray>>,
+        val expiresAtMillis: Long,
+    )
+
     companion object {
         /** Max channels listed in `/status` before collapsing the rest into a "+N more" line. */
         private const val STATUS_CHANNEL_LIMIT = 25
+        private const val VIZ_ALL_PAGE_SIZE = 4
+        private const val VIZ_ALL_SESSION_TTL_MS = 30L * 60L * 1000L
+        private const val VIZ_ALL_BUTTON_PREFIX = "overequal:viz-all"
 
         fun start() {
             val config = BotConfig.load()
