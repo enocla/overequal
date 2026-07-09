@@ -11,9 +11,10 @@ import dev.overequal.viz.Visualizations
 import discord4j.core.DiscordClient
 import discord4j.core.GatewayDiscordClient
 import discord4j.core.event.domain.guild.GuildCreateEvent
-import discord4j.core.event.domain.interaction.ButtonInteractionEvent
 import discord4j.core.event.domain.interaction.ChatInputInteractionEvent
+import discord4j.core.event.domain.interaction.SelectMenuInteractionEvent
 import discord4j.core.`object`.command.ApplicationCommandOption
+import discord4j.core.`object`.component.SelectMenu
 import discord4j.core.`object`.entity.Guild
 import discord4j.discordjson.json.ApplicationCommandOptionChoiceData
 import discord4j.discordjson.json.ApplicationCommandOptionData
@@ -111,8 +112,8 @@ class Bot(
                 }
             }
             scope.launch {
-                gateway.on(ButtonInteractionEvent::class.java).asFlow().collect { ev ->
-                    scope.launch { handleButton(ev) }
+                gateway.on(SelectMenuInteractionEvent::class.java).asFlow().collect { ev ->
+                    scope.launch { handleSelect(ev) }
                 }
             }
             messageWatcher.watch(gateway, scope)
@@ -257,13 +258,13 @@ class Bot(
         }
     }
 
-    private suspend fun handleButton(event: ButtonInteractionEvent) {
-        if (!event.customId.startsWith(VIZ_ALL_BUTTON_PREFIX)) return
+    private suspend fun handleSelect(event: SelectMenuInteractionEvent) {
+        if (!event.customId.startsWith(VIZ_ALL_SELECT_PREFIX)) return
 
         try {
-            handleVizAllPageButton(event)
+            handleVizAllSelect(event)
         } catch (e: Exception) {
-            log.error("button interaction {} failed: {}", event.customId, e.message, e)
+            log.error("select interaction {} failed: {}", event.customId, e.message, e)
             runCatching {
                 event.reply("⚠️ Something went wrong: ${e.message}").withEphemeral(true).awaitFirstOrNull()
             }
@@ -333,7 +334,9 @@ class Bot(
         event: ChatInputInteractionEvent,
         guildId: String,
     ) {
-        event.deferReply().awaitFirstOrNull()
+        // Ephemeral: only the invoking user sees the picker (and its followup
+        // edits), so switching charts can't spam the channel.
+        event.deferReply().withEphemeral(true).awaitFirstOrNull()
         val ds = loadDataset(event, guildId) ?: return
 
         val rendered = ArrayList<Pair<Visualization, ByteArray>>()
@@ -352,33 +355,43 @@ class Bot(
             VizAllSession(
                 guildName = ds.guildName,
                 periodLabel = ds.periodLabel(),
-                rendered = rendered,
+                // A string select carries at most 25 options; we render 22 charts
+                // today, so this only guards against future additions.
+                rendered = rendered.take(SELECT_MENU_MAX_OPTIONS),
                 expiresAtMillis = System.currentTimeMillis() + VIZ_ALL_SESSION_TTL_MS,
             )
-        send(event, vizAllPageMessage(sessionId, pageIndex = 0))
+        send(event, vizAllChartMessage(sessionId, index = 0))
     }
 
-    private suspend fun handleVizAllPageButton(event: ButtonInteractionEvent) {
-        val (sessionId, pageIndex) =
-            parseVizAllButton(event.customId)
+    private suspend fun handleVizAllSelect(event: SelectMenuInteractionEvent) {
+        val sessionId =
+            parseVizAllSelect(event.customId)
                 ?: run {
-                    event.reply("That pagination control is invalid.").withEphemeral(true).awaitFirstOrNull()
+                    event.reply("That chart picker is invalid.").withEphemeral(true).awaitFirstOrNull()
                     return
                 }
 
         pruneVizAllSessions()
         val session = vizAllSessions[sessionId]
         if (session == null) {
-            event.reply("This `/viz-all` page expired. Run `/viz-all` again.").withEphemeral(true).awaitFirstOrNull()
+            event.reply("This `/viz-all` picker expired. Run `/viz-all` again.").withEphemeral(true).awaitFirstOrNull()
             return
         }
+        val index = event.values.firstOrNull()?.toIntOrNull() ?: 0
 
-        val message = vizAllPageMessage(sessionId, pageIndex)
+        // Acknowledge with a deferred edit, then patch the message over the
+        // followup webhook. The interaction *callback* edit drops multipart file
+        // uploads, so a component referencing a fresh `attachment://` 400s with
+        // UNFURLED_MEDIA_ITEM_REFERENCED_ATTACHMENT_NOT_FOUND.
+        event.deferEdit().awaitFirstOrNull()
+        val message = vizAllChartMessage(sessionId, index)
         event
-            .edit()
+            .editReply()
             .withComponents(*message.components.toTypedArray())
             .withFiles(*message.files.toTypedArray())
-            .awaitFirstOrNull()
+            // Drop the previous chart's PNG so attachments don't pile up.
+            .withAttachmentsOrNull(emptyList())
+            .awaitSingle()
     }
 
     private suspend fun handleStatus(
@@ -560,28 +573,29 @@ class Bot(
             .awaitSingle()
     }
 
-    private fun vizAllPageMessage(
+    private fun vizAllChartMessage(
         sessionId: String,
-        pageIndex: Int,
+        index: Int,
     ): V2Message {
         val session = vizAllSessions.getValue(sessionId)
-        val pageCount = pageCount(session.rendered.size)
-        val page = pageIndex.coerceIn(0, pageCount - 1)
-        val start = page * VIZ_ALL_PAGE_SIZE
-        val items = session.rendered.subList(start, minOf(start + VIZ_ALL_PAGE_SIZE, session.rendered.size))
+        val selected = index.coerceIn(0, session.rendered.lastIndex)
+        val (viz, png) = session.rendered[selected]
+        val options =
+            session.rendered.mapIndexed { i, (v, _) ->
+                SelectMenu.Option.of(v.title, i.toString()).withDefault(i == selected)
+            }
+        val select =
+            SelectMenu
+                .of(vizAllCustomId(sessionId), options)
+                .withPlaceholder("Pick a visualization")
 
-        return ComponentsV2.chartsPage(
+        return ComponentsV2.chartPicker(
             guildName = session.guildName,
             periodLabel = session.periodLabel,
             totalCharts = session.rendered.size,
-            pageIndex = page,
-            pageCount = pageCount,
-            items = items,
-            firstCustomId = vizAllCustomId(sessionId, "first", 0),
-            previousCustomId = vizAllCustomId(sessionId, "previous", (page - 1).coerceAtLeast(0)),
-            currentCustomId = vizAllCustomId(sessionId, "current", page),
-            nextCustomId = vizAllCustomId(sessionId, "next", (page + 1).coerceAtMost(pageCount - 1)),
-            lastCustomId = vizAllCustomId(sessionId, "last", pageCount - 1),
+            viz = viz,
+            png = png,
+            select = select,
         )
     }
 
@@ -592,22 +606,14 @@ class Bot(
             .replace("-", "")
             .take(16)
 
-    private fun vizAllCustomId(
-        sessionId: String,
-        action: String,
-        pageIndex: Int,
-    ): String = "$VIZ_ALL_BUTTON_PREFIX:$sessionId:$action:$pageIndex"
+    private fun vizAllCustomId(sessionId: String): String = "$VIZ_ALL_SELECT_PREFIX:$sessionId"
 
-    private fun parseVizAllButton(customId: String): Pair<String, Int>? {
+    /** `overequal:viz-all:<sessionId>` → session id, or null if malformed. */
+    private fun parseVizAllSelect(customId: String): String? {
         val parts = customId.split(":")
-        if (parts.size != 5 || parts[0] != "overequal" || parts[1] != "viz-all") return null
-        val action = parts[3]
-        if (action != "first" && action != "previous" && action != "current" && action != "next" && action != "last") return null
-        val pageIndex = parts[4].toIntOrNull() ?: return null
-        return parts[2] to pageIndex
+        if (parts.size != 3 || parts[0] != "overequal" || parts[1] != "viz-all") return null
+        return parts[2].takeIf { it.isNotEmpty() }
     }
-
-    private fun pageCount(itemCount: Int): Int = (itemCount + VIZ_ALL_PAGE_SIZE - 1) / VIZ_ALL_PAGE_SIZE
 
     private fun pruneVizAllSessions(nowMillis: Long = System.currentTimeMillis()) {
         for ((sessionId, session) in vizAllSessions) {
@@ -627,9 +633,11 @@ class Bot(
     companion object {
         /** Max channels listed in `/status` before collapsing the rest into a "+N more" line. */
         private const val STATUS_CHANNEL_LIMIT = 25
-        private const val VIZ_ALL_PAGE_SIZE = 4
         private const val VIZ_ALL_SESSION_TTL_MS = 30L * 60L * 1000L
-        private const val VIZ_ALL_BUTTON_PREFIX = "overequal:viz-all"
+        private const val VIZ_ALL_SELECT_PREFIX = "overequal:viz-all"
+
+        /** Discord's hard cap on options in a string select menu. */
+        private const val SELECT_MENU_MAX_OPTIONS = 25
 
         fun start() {
             val config = BotConfig.load()
