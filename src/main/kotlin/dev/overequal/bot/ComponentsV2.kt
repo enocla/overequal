@@ -1,6 +1,8 @@
 package dev.overequal.bot
 
 import dev.overequal.viz.Visualization
+import discord4j.core.`object`.component.ActionRow
+import discord4j.core.`object`.component.Button
 import discord4j.core.`object`.component.Container
 import discord4j.core.`object`.component.File
 import discord4j.core.`object`.component.ICanBeUsedInContainerComponent
@@ -13,6 +15,7 @@ import discord4j.core.`object`.component.UnfurledMediaItem
 import discord4j.core.spec.MessageCreateFields
 import discord4j.rest.util.Color
 import java.io.ByteArrayInputStream
+import java.util.concurrent.atomic.AtomicInteger
 
 /** A ready-to-send Components V2 payload: top-level components + their file uploads. */
 data class V2Message(
@@ -28,20 +31,32 @@ data class V2Message(
 object ComponentsV2 {
     private val ACCENT = Color.of(0x20, 0x5E, 0xA6) // Flexoki blue-600
 
-    private var fileCounter = 0
+    private val fileCounter = AtomicInteger()
 
-    private fun freshName(id: String): String = "${id}_${fileCounter++}.png"
+    private fun freshName(id: String): String = "${id}_${fileCounter.getAndIncrement()}.png"
 
     /** One chart as its own container + file. */
     fun chart(
         viz: Visualization,
         png: ByteArray,
+    ): V2Message = chart(viz, png, header = null)
+
+    private fun chart(
+        viz: Visualization,
+        png: ByteArray,
+        header: String?,
     ): V2Message {
         val name = freshName(viz.id)
         val file = MessageCreateFields.File.of(name, ByteArrayInputStream(png))
+        val text =
+            if (header == null) {
+                "## ${viz.title}\n${viz.description}"
+            } else {
+                "$header\n\n### ${viz.title}\n${viz.description}"
+            }
         val children: List<ICanBeUsedInContainerComponent> =
             listOf(
-                TextDisplay.of("## ${viz.title}\n${viz.description}"),
+                TextDisplay.of(text),
                 MediaGallery.of(MediaGalleryItem.of(UnfurledMediaItem.of("attachment://$name"))),
             )
         return V2Message(listOf(Container.of(ACCENT, children)), listOf(file))
@@ -56,6 +71,45 @@ object ComponentsV2 {
             components.addAll(one.components)
             files.addAll(one.files)
         }
+        return V2Message(components, files)
+    }
+
+    /** One `/viz-all` page: up to four chart containers plus a navigation row. */
+    fun chartsPage(
+        guildName: String,
+        periodLabel: String,
+        totalCharts: Int,
+        pageIndex: Int,
+        pageCount: Int,
+        items: List<Pair<Visualization, ByteArray>>,
+        firstCustomId: String,
+        previousCustomId: String,
+        currentCustomId: String,
+        nextCustomId: String,
+        lastCustomId: String,
+    ): V2Message {
+        val components = ArrayList<TopLevelMessageComponent>()
+        val files = ArrayList<MessageCreateFields.File>()
+        val header =
+            "## $guildName — $totalCharts visualizations\n" +
+                "$periodLabel\n" +
+                "Page ${pageIndex + 1} of $pageCount"
+
+        for ((index, item) in items.withIndex()) {
+            val one = chart(item.first, item.second, header = header.takeIf { index == 0 })
+            components.addAll(one.components)
+            files.addAll(one.files)
+        }
+
+        components.add(
+            ActionRow.of(
+                Button.secondary(firstCustomId, "First").disabled(pageIndex == 0),
+                Button.secondary(previousCustomId, "Previous").disabled(pageIndex == 0),
+                Button.secondary(currentCustomId, "Page ${pageIndex + 1}/$pageCount").disabled(),
+                Button.primary(nextCustomId, "Next").disabled(pageIndex == pageCount - 1),
+                Button.primary(lastCustomId, "Last").disabled(pageIndex == pageCount - 1),
+            ),
+        )
         return V2Message(components, files)
     }
 
