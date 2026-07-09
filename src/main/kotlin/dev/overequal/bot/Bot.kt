@@ -319,12 +319,12 @@ class Bot(
         event.deferReply().awaitFirstOrNull()
         val ds = loadDataset(event, guildId) ?: return
         if (viz.requiresContent && ds.contentRedacted) {
-            send(event, ComponentsV2.notice("ℹ️ `${viz.id}` needs message text, which is redacted. Re-run without `redact_content`."))
+            send(event, ComponentsV2.notice("ℹ️ **${viz.title}** needs message text, which is redacted. Re-run without `redact_content`."))
             return
         }
         val png = withContext(Dispatchers.Default) { Visualizations.render(viz, ds) }
         if (png == null) {
-            send(event, ComponentsV2.notice("ℹ️ Not enough data to render `${viz.id}`."))
+            send(event, ComponentsV2.notice("ℹ️ Not enough data to render **${viz.title}**."))
             return
         }
         send(event, ComponentsV2.chart(viz, png))
@@ -417,7 +417,7 @@ class Bot(
                         val rest = ranked.size - STATUS_CHANNEL_LIMIT
                         if (rest > 0) append("• …and **$rest** more\n")
                     }
-                    append("\nAvailable charts: ${Visualizations.ids().joinToString(", ") { "`$it`" }}")
+                    append("\nAvailable charts: ${Visualizations.all.joinToString(", ") { "**${it.title}**" }}")
                 }
             }
         send(event, ComponentsV2.notice(text))
@@ -582,7 +582,10 @@ class Bot(
         val (viz, png) = session.rendered[selected]
         val options =
             session.rendered.mapIndexed { i, (v, _) ->
-                SelectMenu.Option.of(v.title, i.toString()).withDefault(i == selected)
+                SelectMenu.Option
+                    .of(v.title.take(SELECT_LABEL_MAX_CHARS), i.toString())
+                    .withDescription(v.description.take(SELECT_LABEL_MAX_CHARS))
+                    .withDefault(i == selected)
             }
         val select =
             SelectMenu
@@ -638,6 +641,9 @@ class Bot(
 
         /** Discord's hard cap on options in a string select menu. */
         private const val SELECT_MENU_MAX_OPTIONS = 25
+
+        /** Discord's hard cap on a select option's label/description length. */
+        private const val SELECT_LABEL_MAX_CHARS = 100
 
         fun start() {
             val config = BotConfig.load()
