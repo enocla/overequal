@@ -577,11 +577,11 @@ class Bot(
             pageIndex = page,
             pageCount = pageCount,
             items = items,
-            firstCustomId = vizAllCustomId(sessionId, 0),
-            previousCustomId = vizAllCustomId(sessionId, (page - 1).coerceAtLeast(0)),
-            currentCustomId = vizAllCustomId(sessionId, page),
-            nextCustomId = vizAllCustomId(sessionId, (page + 1).coerceAtMost(pageCount - 1)),
-            lastCustomId = vizAllCustomId(sessionId, pageCount - 1),
+            firstCustomId = vizAllCustomId(sessionId, "first", 0),
+            previousCustomId = vizAllCustomId(sessionId, "previous", (page - 1).coerceAtLeast(0)),
+            currentCustomId = vizAllCustomId(sessionId, "current", page),
+            nextCustomId = vizAllCustomId(sessionId, "next", (page + 1).coerceAtMost(pageCount - 1)),
+            lastCustomId = vizAllCustomId(sessionId, "last", pageCount - 1),
         )
     }
 
@@ -594,13 +594,16 @@ class Bot(
 
     private fun vizAllCustomId(
         sessionId: String,
+        action: String,
         pageIndex: Int,
-    ): String = "$VIZ_ALL_BUTTON_PREFIX:$sessionId:$pageIndex"
+    ): String = "$VIZ_ALL_BUTTON_PREFIX:$sessionId:$action:$pageIndex"
 
     private fun parseVizAllButton(customId: String): Pair<String, Int>? {
         val parts = customId.split(":")
-        if (parts.size != 4 || parts[0] != "overequal" || parts[1] != "viz-all") return null
-        val pageIndex = parts[3].toIntOrNull() ?: return null
+        if (parts.size != 5 || parts[0] != "overequal" || parts[1] != "viz-all") return null
+        val action = parts[3]
+        if (action != "first" && action != "previous" && action != "current" && action != "next" && action != "last") return null
+        val pageIndex = parts[4].toIntOrNull() ?: return null
         return parts[2] to pageIndex
     }
 
