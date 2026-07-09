@@ -137,7 +137,7 @@ class Bot(
             Visualizations.all.take(25).map {
                 ApplicationCommandOptionChoiceData
                     .builder()
-                    .name(it.id)
+                    .name(it.title)
                     .value(it.id)
                     .build()
             }
